@@ -1,3 +1,4 @@
+# coding:utf-8
 from model import Generator
 from model import Discriminator
 from torch.autograd import Variable
@@ -89,6 +90,7 @@ class Solver(object):
 
     def print_network(self, model, name):
         """Print out the network information."""
+        # model是一个类对象，输出model中的内容
         num_params = 0
         for p in model.parameters():
             num_params += p.numel()
@@ -96,12 +98,13 @@ class Solver(object):
         print(name)
         print("The number of parameters: {}".format(num_params))
 
+    # restore恢复的意思，加载模型
     def restore_model(self, resume_iters):
         """Restore the trained generator and discriminator."""
         print('Loading the trained models from step {}...'.format(resume_iters))
         G_path = os.path.join(self.model_save_dir, '{}-G.ckpt'.format(resume_iters))
         D_path = os.path.join(self.model_save_dir, '{}-D.ckpt'.format(resume_iters))
-        self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
+        self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))   # 加载张量到CPU上
         self.D.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
 
     def build_tensorboard(self):
@@ -118,13 +121,20 @@ class Solver(object):
 
     def reset_grad(self):
         """Reset the gradient buffers."""
+        # 把模型的参数梯度设成0
+        # 梯度，反向传播时用到
         self.g_optimizer.zero_grad()
         self.d_optimizer.zero_grad()
 
+    # 把张量转换为变量
     def tensor2var(self, x, volatile=False):
         """Convert torch tensor to variable."""
         if torch.cuda.is_available():
             x = x.cuda()
+        # volatile: Boolean indicating that the Variable should be used in
+        #     inference mode, i.e. don't save the history. See
+        #     :ref:`excluding-subgraphs` for more details.
+        #     Can be changed only on leaf Variables.
         return Variable(x, volatile=volatile)
 
     def denorm(self, x):
@@ -132,6 +142,7 @@ class Solver(object):
         out = (x + 1) / 2
         return out.clamp_(0, 1)
 
+    # 目的：稳定训练过程和提高生成图像质量
     def gradient_penalty(self, y, x, dtype):
         """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2."""
         weight = torch.ones(y.size()).type(dtype)
@@ -162,17 +173,21 @@ class Solver(object):
                 if attr_name in ['Black_Hair', 'Blond_Hair', 'Brown_Hair', 'Gray_Hair']:
                     hair_color_indices.append(i)
 
-        c_trg_list = []
+        c_trg_list = []     # 内容与c_trg一样，类型从FloatTensor变为Variable存储在list中
         for i in range(c_dim):
             if dataset == 'CelebA':
                 c_trg = c_org.clone()
-                if i in hair_color_indices:  # Set one hair color to 1 and the rest to 0.
+
+                # 若i代表发色
+                if i in hair_color_indices:     # Set one hair color to 1 and the rest to 0.   # 出于头发颜色只有一种的考虑？
                     c_trg[:, i] = 1
                     for j in hair_color_indices:
                         if j != i:
-                            c_trg[:, j] = 0
+                            c_trg[:, j] = 0     # 把所有图片发色改成相同，其他属性不变
+                # 若i为除发色外的其他属性
                 else:
-                    c_trg[:, i] = (c_trg[:, i] == 0)  # Reverse attribute value.
+                    c_trg[:, i] = (c_trg[:, i] == 0)  # Reverse attribute value.    # 所有属性取反？
+
             elif dataset == 'RaFD':
                 c_trg = self.label2onehot(torch.ones(c_org.size(0))*i, c_dim)
 
@@ -194,9 +209,18 @@ class Solver(object):
         elif self.dataset == 'RaFD':
             data_loader = self.rafd_loader
 
+        # data_loader是一个DataLoader对象，具有应该是全部数据属性
+        # self是Solver对象，具有Solver的所有属性
+
         # Fetch fixed inputs for debugging.
-        data_iter = iter(data_loader)
-        x_fixed, c_org = next(data_iter)
+        # Fetch fixed inputs for debugging.     # 这一步是想干嘛？create_labels那里也是没看懂想做什么。
+        data_iter = iter(data_loader)           # iter()函数用来生成迭代器，data_iter内容比data_loader还多些，应该是用于迭代的信息
+        x_fixed, c_org = next(data_iter)        # next()获取迭代器内容
+        # c_org是图像原来具有的属性，内容为attribute的数字表示形式，是个二维矩阵，[ [1 0 0 1 1], ... , [0 0 0 1 1] ]
+        # 可是有点奇怪的是，我设置了18个训练数据，为什么c_org大小是16x5呢？
+        # x_fixed存储的是图像信息（由[-1,1]之间的浮点值组成的二维矩阵），但也是只有16组数据，每组3通道数据？
+
+
         x_fixed = self.tensor2var(x_fixed, volatile=True)
         c_fixed_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
 
@@ -206,6 +230,7 @@ class Solver(object):
 
         # Start training from scratch or resume training.
         start_iters = 0
+        # 从第resume_iters步恢复训练
         if self.resume_iters:
             start_iters = self.resume_iters
             self.restore_model(self.resume_iters)
@@ -221,14 +246,16 @@ class Solver(object):
 
             # Fetch real images and labels.
             try:
+                # x_real：type = FloatTensor，shape = [2,3,128,128]      这里2应该是指两张图片，想想之前的只有16组训练数据
+                # label_org = [[1 0 0 1 1],[0 0 1 0 1]]，shape = [2,5]   可是为什么会一次取两个数据呢？
                 x_real, label_org = next(data_iter)
             except:
                 data_iter = iter(data_loader)
                 x_real, label_org = next(data_iter)
 
-            # Generate target domain labels randomly.
+            # Generate target domain labels randomly.   随机生成目标域标签
             rand_idx = torch.randperm(label_org.size(0))
-            label_trg = label_org[rand_idx]
+            label_trg = label_org[rand_idx]             # 这两步实在有趣
 
             if self.dataset == 'CelebA':
                 c_org = label_org.clone()
@@ -250,14 +277,18 @@ class Solver(object):
             # Compute loss with real images.
             out_src, out_cls = self.D(x_real)
             d_loss_real = - torch.mean(out_src)
-            d_loss_cls = self.classification_loss(out_cls, label_org, self.dataset)
+            d_loss_cls = self.classification_loss(out_cls, label_org, self.dataset)     # 计算分类损失，交叉熵loss
 
             # Compute loss with fake images.
             x_fake = self.G(x_real, c_trg)
-            out_src, out_cls = self.D(x_fake.detach())
+            # detach：
+            # Returns a new Variable, detached from the current graph.
+            # Result will never require gradient. If the input is volatile, the output will be volatile too.
+            out_src, out_cls = self.D(x_fake.detach())      # detach是分离的意思
             d_loss_fake = torch.mean(out_src)
 
             # Compute loss for gradient penalty.
+            # 应该是优化操作，优化GAN的收敛
             alpha = torch.rand(x_real.size(0), 1, 1, 1).type(self.dtype)
             x_hat = Variable(alpha * x_real.data + (1 - alpha) * x_fake.data, requires_grad=True)
             out_src, _ = self.D(x_hat)
@@ -308,7 +339,7 @@ class Solver(object):
 
             # Print out training information.
             if (i+1) % self.log_step == 0:
-                et = time.time() - start_time
+                et = time.time() - start_time   # endtime
                 et = str(datetime.timedelta(seconds=et))[:-7]
                 log = "Elapsed [{}], Iteration [{}/{}]".format(et, i+1, self.num_iters)
                 for tag, value in loss.items():
@@ -337,7 +368,7 @@ class Solver(object):
                 torch.save(self.D.state_dict(), D_path)
                 print('Saved model checkpoints into {}...'.format(self.model_save_dir))
 
-            # Decay learning rates.
+            # Decay learning rates.     Decay-衰变
             if (i+1) % self.lr_update_step == 0 and (i+1) > (self.num_iters - self.num_iters_decay):
                 g_lr -= (self.g_lr / float(self.num_iters_decay))
                 d_lr -= (self.d_lr / float(self.num_iters_decay))

@@ -1,14 +1,15 @@
+# coding:utf-8
 import os
-import argparse
+import argparse     # 命令行解析模块
 from solver import Solver
 from data_loader import get_loader
 from torch.backends import cudnn
 
 
-def str2bool(v):
-    return v.lower() in ('true')
+def str2bool(v):                    # v is the value of parameter '--use_tensorboard''
+    return v.lower() in ('true')    # '--use_tensorboard true' to use tensorboard
 
-def main(config):
+def main(config):       # 'config = parser.parse_args()'
     # For fast training.
     cudnn.benchmark = True
 
@@ -37,6 +38,7 @@ def main(config):
     
 
     # Solver for training and testing StarGAN.
+    # 核心
     solver = Solver(celeba_loader, rafd_loader, config)
 
     if config.mode == 'train':
@@ -52,7 +54,7 @@ def main(config):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()      # 创建对象
 
     # Model configuration.
     parser.add_argument('--c_dim', type=int, default=5, help='dimension of domain labels (1st dataset)')
@@ -102,7 +104,7 @@ if __name__ == '__main__':
     # Step size.
     parser.add_argument('--log_step', type=int, default=10)
     parser.add_argument('--sample_step', type=int, default=1000)
-    parser.add_argument('--model_save_step', type=int, default=10000)
+    parser.add_argument('--model_save_step', type=int, default=10000)       # 每k步保存一次模型
     parser.add_argument('--lr_update_step', type=int, default=1000)
 
     config = parser.parse_args()
