@@ -59,7 +59,7 @@ class CelebA(data.Dataset):
                 label.append(values[idx] == '1')    # values记录了当前图片所有的属性
 
             # 选取2000张作为测试集
-            if (i+1) < 2000:
+            if (i+1) <= 2:   # mark ori_=2000
                 self.test_dataset.append([filename, label])
             else:
                 self.train_dataset.append([filename, label])
@@ -77,7 +77,8 @@ class CelebA(data.Dataset):
         """Return the number of images."""
         return self.num_images
 
-
+# 下载完数据之后，将所有图片放在一个文件夹，然后将该文件夹移动至 data 目录下（请确保data下没有其他的文件夹）。
+# 这种处理方式是为了能够直接使用torchvision自带的ImageFolder读取图片，而不必自己写Dataset。
 def get_loader(image_dir, attr_path, selected_attrs, crop_size=178, image_size=128, 
                batch_size=16, dataset='CelebA', mode='train', num_workers=1):
     """Build and return a data loader."""
@@ -110,5 +111,5 @@ def get_loader(image_dir, attr_path, selected_attrs, crop_size=178, image_size=1
     data_loader = data.DataLoader(dataset=dataset,
                                   batch_size=batch_size,
                                   shuffle=(mode=='train'),
-                                  num_workers=num_workers)
+                                  num_workers=num_workers)  # num_workers=k表示使用k个子进程来加载数据
     return data_loader

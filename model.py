@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+# Pytorch两种定义网络的方式：残差网络和生成器模型的定义方式
 # 含5层网络的残差块
 class ResidualBlock(nn.Module):
     """Residual Block with instance normalization."""
@@ -31,7 +32,7 @@ class Generator(nn.Module):
         layers.append(nn.ReLU(inplace=True))
 
         # Down-sampling layers.
-        curr_dim = conv_dim     # filters
+        curr_dim = conv_dim     # num of filters
         for i in range(2):
             layers.append(nn.Conv2d(curr_dim, curr_dim*2, kernel_size=4, stride=2, padding=1, bias=False))
             layers.append(nn.InstanceNorm2d(curr_dim*2, affine=True))
@@ -45,13 +46,14 @@ class Generator(nn.Module):
         # Up-sampling layers.
         for i in range(2):
             # '// '运算结果为整型
+            # ConvTranspose2d 上采样
             layers.append(nn.ConvTranspose2d(curr_dim, curr_dim//2, kernel_size=4, stride=2, padding=1, bias=False))
             layers.append(nn.InstanceNorm2d(curr_dim//2, affine=True))
             layers.append(nn.ReLU(inplace=True))
             curr_dim = curr_dim // 2
 
         layers.append(nn.Conv2d(curr_dim, 3, kernel_size=7, stride=1, padding=3, bias=False))
-        # 最末层使用一个缩放的Tanh来确保输出图像的像素在[0,255]之间
+        # 最后一层用 Tanh 将输出图片的像素归一化至 -1~1，如果希望归一化至 0~1，则需使用 Sigmoid。
         layers.append(nn.Tanh())
         # nn库里有一个类型叫做Sequential序列，这个Sequential是一个容器类，我们可以在它里面添加一些基本的模块
         self.main = nn.Sequential(*layers)
@@ -65,6 +67,8 @@ class Generator(nn.Module):
         return self.main(x)
 
 # 判别器没有normalization
+# 生成器的激活函数用的是ReLU，而判别器使用的是LeakyReLU，二者并无本质区别，这里的选择更多是经验总结
+# 每一个样本经过判别器后，输出一个 0~1 的数，表示这个样本是真图片的概率。
 class Discriminator(nn.Module):
     """Discriminator network with PatchGAN."""
     def __init__(self, image_size=128, conv_dim=64, c_dim=5, repeat_num=6):

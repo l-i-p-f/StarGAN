@@ -10,7 +10,10 @@ import os
 import time
 import datetime
 
-
+"""
+在Deep Learning中，往往loss function是非凸的，没有解析解，我们需要通过优化方法来求解。
+solver的主要作用就是交替调用前向（forward)算法和后向（backward)算法来更新参数，从而最小化loss，实际上就是一种迭代的优化算法。
+"""
 class Solver(object):
     """Solver for training and testing StarGAN."""
 
@@ -79,6 +82,8 @@ class Solver(object):
             self.G = Generator(self.g_conv_dim, self.c_dim+self.c2_dim+2, self.g_repeat_num)   # 2 for mask vector.
             self.D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim+self.c2_dim, self.d_repeat_num)
 
+        # 优化器对象:保持当前的状态【state】和基于梯度计算更新参数.
+        # 这个state是权重？
         self.g_optimizer = torch.optim.Adam(self.G.parameters(), self.g_lr, [self.beta1, self.beta2])
         self.d_optimizer = torch.optim.Adam(self.D.parameters(), self.d_lr, [self.beta1, self.beta2])
         self.print_network(self.G, 'G')
@@ -104,7 +109,7 @@ class Solver(object):
         print('Loading the trained models from step {}...'.format(resume_iters))
         G_path = os.path.join(self.model_save_dir, '{}-G.ckpt'.format(resume_iters))
         D_path = os.path.join(self.model_save_dir, '{}-D.ckpt'.format(resume_iters))
-        self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))   # 加载张量到CPU上
+        self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))   # 加载张量到内存
         self.D.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
 
     def build_tensorboard(self):
@@ -112,6 +117,7 @@ class Solver(object):
         from logger import Logger
         self.logger = Logger(self.log_dir)
 
+    # ？了解此处减小学习率的方法和时机
     def update_lr(self, g_lr, d_lr):
         """Decay learning rates of the generator and discriminator."""
         for param_group in self.g_optimizer.param_groups:
@@ -119,13 +125,24 @@ class Solver(object):
         for param_group in self.d_optimizer.param_groups:
             param_group['lr'] = d_lr
 
+    # 计算损失时，每次都要重新reset梯度为0
+    # 如果不置零，Variable的梯度在每次 backward 的时候都会累加
     def reset_grad(self):
         """Reset the gradient buffers."""
-        # 把模型的参数梯度设成0
+        # 把优化器对象的梯度设成0
         # 梯度，反向传播时用到
         self.g_optimizer.zero_grad()
         self.d_optimizer.zero_grad()
 
+    """
+    tensor是PyTorch中的完美组件，但是构建神经网络还远远不够，我们需要能够构建计算图的tensor，这就是Variable
+    Variable是对tensor的封装，操作和tensor是一样的，但是每个Variable都有三个属性
+    Variable中的.data：对应tensor本身
+                .grad：对应tensor的梯度
+                .grad_fn：实现autograd相关
+
+    理解：tensor是描述数据流动的图 variable是实现图计算的对象
+    """
     # 把张量转换为变量
     def tensor2var(self, x, volatile=False):
         """Convert torch tensor to variable."""
@@ -140,9 +157,11 @@ class Solver(object):
     def denorm(self, x):
         """Convert the range from [-1, 1] to [0, 1]."""
         out = (x + 1) / 2
-        return out.clamp_(0, 1)
+        # clamp_(min,max)：把小于min的数置于min，大于max的数置max，区间内的数维持不变
+        return out.clamp_(0, 1)     # 此处有些像保险操作，确保return数据范围在[0,1]
 
-    # 目的：稳定训练过程和提高生成图像质量
+    """ ？似乎是来自于Wasserstein GAN（WGAN）的想法，待研究 """
+    # gradient penalty目的：稳定训练过程（让梯度在后向传播的过程中保持平稳）和提高生成图像质量
     def gradient_penalty(self, y, x, dtype):
         """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2."""
         weight = torch.ones(y.size()).type(dtype)
@@ -161,9 +180,14 @@ class Solver(object):
         """Convert label indices to one-hot vectors."""
         batch_size = labels.size(0)
         out = torch.zeros(batch_size, dim)
-        out[np.arange(batch_size), labels.long()] = 1
+        """
+            >>> np.arange( 5)
+            array([0, 1, 2, 3, 4])
+        """
+        out[np.arange(batch_size), labels.long()] = 1   # ？
         return out
 
+    # 生成用于调试和测试的目标域标签？
     def create_labels(self, c_org, c_dim=5, dataset='CelebA', selected_attrs=None):
         """Generate target domain labels for debugging and testing."""
         # Get hair color indices.
@@ -179,14 +203,14 @@ class Solver(object):
                 c_trg = c_org.clone()
 
                 # 若i代表发色
-                if i in hair_color_indices:     # Set one hair color to 1 and the rest to 0.   # 出于头发颜色只有一种的考虑？
+                if i in hair_color_indices:     # Set one hair color to 1 and the rest to 0.   # 每张图片只有一种发色
                     c_trg[:, i] = 1
                     for j in hair_color_indices:
                         if j != i:
-                            c_trg[:, j] = 0     # 把所有图片发色改成相同，其他属性不变
+                            c_trg[:, j] = 0
                 # 若i为除发色外的其他属性
                 else:
-                    c_trg[:, i] = (c_trg[:, i] == 0)  # Reverse attribute value.    # 所有属性取反？
+                    c_trg[:, i] = (c_trg[:, i] == 0)  # Reverse attribute value.    # 属性取反？
 
             elif dataset == 'RaFD':
                 c_trg = self.label2onehot(torch.ones(c_org.size(0))*i, c_dim)
@@ -203,7 +227,7 @@ class Solver(object):
 
     def train(self):
         """Train StarGAN within a single dataset."""
-        # Set data loader.
+        # Set data loader. 获取操作变量
         if self.dataset == 'CelebA':
             data_loader = self.celeba_loader
         elif self.dataset == 'RaFD':
@@ -213,15 +237,14 @@ class Solver(object):
         # self是Solver对象，具有Solver的所有属性
 
         # Fetch fixed inputs for debugging.
-        # Fetch fixed inputs for debugging.     # 这一步是想干嘛？create_labels那里也是没看懂想做什么。
-        data_iter = iter(data_loader)           # iter()函数用来生成迭代器，data_iter内容比data_loader还多些，应该是用于迭代的信息
-        x_fixed, c_org = next(data_iter)        # next()获取迭代器内容
-        # c_org是图像原来具有的属性，内容为attribute的数字表示形式，是个二维矩阵，[ [1 0 0 1 1], ... , [0 0 0 1 1] ]
-        # 可是有点奇怪的是，我设置了18个训练数据，为什么c_org大小是16x5呢？
-        # x_fixed存储的是图像信息（由[-1,1]之间的浮点值组成的二维矩阵），但也是只有16组数据，每组3通道数据？
-
-
+        # c_org是输入图像具有的属性，内容为attribute的数字表示形式，是个二维矩阵，[ [1 0 0 1 1], ... , [0 0 0 1 1] ]，shape[ 16 x 5 ]
+        # x_fixed存储的是图像信息（由[-1,1]之间的浮点值组成的二维矩阵），shape[ 16 x 3 x 128 x 128 ]
+        # 16是batch_size大小
+        data_iter = iter(data_loader)           # iter()函数用来生成迭代器，此处生成迭代器对象data_iter
+        x_fixed, c_org = next(data_iter)        # next()获取迭代器内容，迭代器每次取batch_size张图片
         x_fixed = self.tensor2var(x_fixed, volatile=True)
+
+        # 生成用于调试和测试的target label
         c_fixed_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
 
         # Learning rate cache for decaying.
@@ -246,8 +269,7 @@ class Solver(object):
 
             # Fetch real images and labels.
             try:
-                # x_real：type = FloatTensor，shape = [2,3,128,128]      这里2应该是指两张图片，想想之前的只有16组训练数据
-                # label_org = [[1 0 0 1 1],[0 0 1 0 1]]，shape = [2,5]   可是为什么会一次取两个数据呢？
+                # 注意实际训练是从第二次取数据开始
                 x_real, label_org = next(data_iter)
             except:
                 data_iter = iter(data_loader)
@@ -275,30 +297,33 @@ class Solver(object):
             # =================================================================================== #
 
             # Compute loss with real images.
+            # ouc_scr: shape = [ 2, 1, 2, 2 ]
             out_src, out_cls = self.D(x_real)
-            d_loss_real = - torch.mean(out_src)
+            d_loss_real = - torch.mean(out_src)     # 对out_src里的所有值求和然后求平均，再取负
             d_loss_cls = self.classification_loss(out_cls, label_org, self.dataset)     # 计算分类损失，交叉熵loss
 
             # Compute loss with fake images.
             x_fake = self.G(x_real, c_trg)
-            # detach：
-            # Returns a new Variable, detached from the current graph.
-            # Result will never require gradient. If the input is volatile, the output will be volatile too.
+            # 在训练判别器时，需要对生成器生成的图片用 detach 操作进行计算图截断，避免反向传播将梯度传到生成器中
+            # 因为在训练判别器时不需要训练生成器，也就不需要生成器的梯度
             out_src, out_cls = self.D(x_fake.detach())      # detach是分离的意思
             d_loss_fake = torch.mean(out_src)
 
             # Compute loss for gradient penalty.
-            # 应该是优化操作，优化GAN的收敛
+            # 优化GAN的收敛
             alpha = torch.rand(x_real.size(0), 1, 1, 1).type(self.dtype)
+            # alpha [ 16x1x1x1 ], x_real[ 16x3x128x128 ] 如何做矩阵乘法运算？
+            # x_hat: shape = [ 16 x 3 x 128 x 128 ]
             x_hat = Variable(alpha * x_real.data + (1 - alpha) * x_fake.data, requires_grad=True)
             out_src, _ = self.D(x_hat)
             d_loss_gp = self.gradient_penalty(out_src, x_hat, self.dtype)
 
             # Backward and optimize.
             d_loss = d_loss_real + d_loss_fake + self.lambda_cls * d_loss_cls + self.lambda_gp * d_loss_gp
-            self.reset_grad()
-            d_loss.backward()
-            self.d_optimizer.step()
+
+            self.reset_grad()           # reset梯度
+            d_loss.backward()           # 计算梯度
+            self.d_optimizer.step()     # 调用优化器更新参数
 
             # Logging.
             loss = {}
@@ -310,7 +335,7 @@ class Solver(object):
             # =================================================================================== #
             #                               3. Train the generator                                #
             # =================================================================================== #
-            
+            # 每训练n_critic次判别器，才训练一次生成器
             if (i+1) % self.n_critic == 0:
                 # Original-to-target domain.
                 x_fake = self.G(x_real, c_trg)
